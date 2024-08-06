@@ -1,0 +1,358 @@
+---
+title: "Midterm Project"
+author: "Tina Hajinejad"
+date: "2023-02-24"
+output:
+  html_document: default
+  pdf_document: 
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Libraries:
+
+library(stringr)
+library(skimr)
+library(tidyverse)
+library(lubridate)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(glmnet)
+library(naniar)
+library(mice)
+library(abind)
+library(zoo)
+```
+
+## Initializing
+
+
+```{r Merge Data}
+
+#First Read from csv files
+tiketcom = read.csv("tiketcom_bestprice.csv")
+distances = read.csv("distance_between_indonesian_airports.csv")
+
+#Now we clean datasets
+
+#Cleaning tiketcom_bestprice.csv
+prices_names = str_split_fixed(names(tiketcom), "\\.", 5) 
+prices_values = vector("character", 5)
+
+for (i in 1:nrow(tiketcom)){
+  val = vector("character", 5)
+  val = str_split_fixed(tiketcom[i,1], "\\|", 5)
+  prices_values <- rbind(prices_values,val)
+}
+prices = prices_values[!apply(prices_values == "", 1, all),]   #Erasing the first row because it was blank
+prices_df <- data.frame(prices)                    #Changing vector to data frame
+
+colnames(prices_df)<-prices_names    #Column names should be varnames(unique variable names)
+rownames(prices_df)<-c()        
+
+
+
+```
+
+```{r}
+
+#Cleaning distance_between_indonesian_airports.csv
+distance_names = str_split_fixed(names(distances), "\\.", 4) 
+distance_values = vector("character", 4)
+
+for (i in 1:nrow(distances)){
+  val = vector("character", 4)
+  val = str_split_fixed(distances[i,1], "\\|", 4)
+  distance_values <- rbind(distance_values,val)
+}
+distances = distance_values[!apply(distance_values == "", 1, all),]   #Erasing the first row because it was blank
+distance_df <- data.frame(distances)                    #Changing vector to data frame
+
+colnames(distance_df)<-distance_names    #Column names should be varnames(unique variable names)
+rownames(distance_df)<-c()        
+distance_df$distance_km <- as.numeric(distance_df$distance_km)
+
+```
+
+
+
+
+```{r pressure, echo=FALSE}
+
+distance_km <- vector("numeric", length = nrow(prices_df))
+flight_time_hour <- vector("numeric", length = nrow(prices_df))
+for (i in 1:nrow(prices_df)){
+  for (j in 1:nrow(distance_df)){
+    ind = str_detect(prices_df$destination[i] , distance_df$airport_to[j])
+    if (ind == TRUE){
+      distance_km[i] <- distance_df$distance_km[j]
+      flight_time_hour[i] <- distance_df$flight_time_hour[j]
+      break
+    }
+  }
+}
+
+prices_df$distance_km <- distance_km
+prices_df$flight_time_hour <- flight_time_hour
+
+
+```
+
+
+```{r}
+#Changing types:
+cols.num <- c("best_price" , "distance_km" , "flight_time_hour")
+prices_df[cols.num] <- sapply(prices_df[cols.num],as.numeric) 
+skim(prices_df)
+```
+
+
+## Question 2
+
+```{r Plot}
+
+# Adding a column to see what day is each date
+
+days <- wday(prices_df$depart_date, label = TRUE)
+days_num <- wday(prices_df$depart_date)
+
+#Making a new df
+
+price_day <- cbind(prices_df, days, days_num)
+
+#Find the average of price ticket based on 
+
+price_stats = ddply(price_day, "days_num", summarize,
+                     avg_pl = mean(best_price))
+
+
+
+plot(price_stats[,1],price_stats[,2],type ="l",xlab = "days",ylab = "avg price")
+```
+
+```{r}
+#Test: See what flies happen on mondays.
+#Flights each day of the week
+mon = filter(price_day, days == "Mon")
+mon_type = unique(mon$destination)
+
+
+tue = filter(price_day, days == "Tue")
+tue_type = unique(tue$destination)
+####
+####
+# Flight pattern for a destination / each day of week
+btj <- filter(price_day, destination == "BTJ")
+btj_stats = ddply(btj, "days_num", summarize,
+                     avg_pl = mean(best_price))
+
+plot(btj_stats[,1],btj_stats[,2],type ="l",xlab = "days",ylab = "avg price")
+
+
+
+
+```
+
+\newpage
+
+We will now see how average price of plane tickets change based on the departure date.
+```{r}
+
+### Prices as a function of departure date 
+price_day$depart_date<-as.Date(price_day$depart_date)
+price_stats_date = ddply(price_day, "depart_date", summarize,
+                     avg_p_d = mean(best_price))
+plot(price_stats_date[,1],price_stats_date[,2],type ="l",xlab = "days",ylab = "avg price")
+
+
+```
+
+Nothing is visible from this graph excpt that price tickets for summer are high because everybody is going on a vacation but prices for 2024 are now low because they are far off in the future.
+
+Now let's see if flights destinations have a say in this:
+
+```{r}
+price_day$depart_date<-as.Date(price_day$depart_date)
+price_stats_date_2 = ddply(price_day, .(depart_date,destination), summarize,
+                     avg_2 = mean(best_price))
+#plot(price_stats_date[,1],price_stats_date[,2],type ="l",xlab = "days",ylab = "avg price")
+
+
+ggplot(price_stats_date_2, aes(x = depart_date, y = avg_2, color = destination)) +
+  geom_line() +
+  labs(x = "Departure Date", y = "Average Price", color = "Destination") +
+  theme_bw() +
+  theme(aspect.ratio=1/2) #Long and skinny
+
+
+```
+
+This isn't helping. I try to separate types of flights, based on flight time
+```{r}
+
+# Finding the point where flight_hours more than that is considered "long flight"
+# and flights wih durations less than that is considered "short" flight
+distance_df$flight_time_hour <- as.numeric(distance_df$flight_time_hour)
+separator <- mean(distance_df$flight_time_hour)
+
+short_flight = filter(price_day, flight_time_hour < separator )
+long_flight = filter(price_day, flight_time_hour > separator )
+
+# Finding averages for short and long flights, then plotting
+
+short_flight_stats = ddply(short_flight, "depart_date", summarize,
+                     avg_sf = mean(best_price))
+long_flight_stats = ddply(long_flight, "depart_date", summarize,
+                     avg_lf = mean(best_price))
+
+
+# Combine data into a data frame
+#combine_df <- cbind(short_flight_stats, long_flight_stats$avg_lf)
+
+# Plot both curves
+ggplot() +
+  geom_line(data = short_flight_stats, aes(x = depart_date, y = avg_sf, color = "Short Flights")) +
+  geom_line(data = long_flight_stats, aes(x = depart_date, y = avg_lf, color = "Long Flights")) +
+  labs(x = "Departure Date", y = "Average Price", title = "Average Price for Short and Long Flights") +
+  scale_color_manual(values = c("Short Flights" = "blue", "Long Flights" = "red")) +
+  scale_x_date(date_labels = "%b %d, %Y", date_breaks = "100 day")
+
+
+```
+
+
+```{r Q3}
+dist_seq = seq(from=130, to =4000, by=100)
+
+my_bin <- cut(prices_df$distance_km, dist_seq)
+
+my_dist <- data.frame(prices_df, my_bin)
+
+dist_price_bin = ddply(my_dist, "my_bin", summarize,
+                     avg_bin = mean(best_price))
+
+dist_price_bin_all <- complete(dist_price_bin, my_bin)
+dist_price_bin_all$my_bin <- as.factor(dist_price_bin_all$my_bin)
+ggplot(dist_price_bin_all, aes(x = my_bin, y = avg_bin)) +
+  geom_point(size = 2) +
+  xlab("Distance bin") +
+  ylab("Average price") +
+  ggtitle("Average price by distance bin") +
+  theme(axis.text.x = element_text(angle = 45, size = 8)) +
+  scale_x_discrete(breaks = dist_price_bin_all$my_bin[c(T, F, F)])
+```
+
+```{r}
+#Q4a 5pts) Plot the number of flights by calendar day (of departure)
+
+my_data <- price_day %>% mutate(ones = 1)
+
+n_flights_df = ddply(my_data, "depart_date", summarize,
+                     n_flights = sum(ones))
+
+
+#dn_flights_df_all <- complete(dist_price_bin, my_bin)
+
+ggplot(n_flights_df, aes(x = depart_date, y = n_flights)) +
+  geom_point(size = 1) +
+  xlab("Depart Date") +
+  ylab("Number of flights") +
+  ggtitle("Number of flights for each date") +
+  theme(axis.text.x = element_text(angle = 45, size = 10))
+
+```
+
+There are so many missing data. Let's complete them with NAs:
+```{r}
+depart_date <- seq(from = as.Date("2023-01-01"), to = as.Date("2024-06-26"), by = "day")
+depart_date <- data.frame(depart_date)
+
+new_data <- n_flights_df %>% 
+  right_join(depart_date, by = "depart_date") %>% 
+  mutate(n_flights = ifelse(is.na(n_flights), NA, n_flights))
+
+sorted_data <- new_data %>%
+  arrange(depart_date)
+
+vis_miss(sorted_data)
+
+
+```
+We can see many many flights information are missing(mainly between 2023-08 to 2023-12)
+and many others in 2024.
+Now that we have added NAs to the data, let's impute them.:
+```{r}
+#Q4b) imputation
+#we have this sorted dataframe that shows the number of flights per departure date. 
+#I added the dates with no flights and filled them with NAs, because that's necessary for imputation.
+#There are several ways for imputation.
+#Let's try: Remove cases with missing values for only the variables used. Because there are so many of them I don't prefer this:
+#We can check this by:
+
+vis_miss(sorted_data)
+
+
+```
+Now let's Check : Multiple imputation.
+```{r}
+# Make 5 imputations:
+tempData <- mice(sorted_data,m=5,maxit=10,method='pmm',seed=500)
+summary(tempData)
+completedData <- complete(tempData,1)
+summary(completedData)
+xyplot(tempData,n_flights ~ depart_date, pch=18, cex=0.8)
+
+```
+Another option is The zoo package (Z’s Ordered Observations) is mostly for time series data, where information is time-stamped or otherwise has a definite time-like ordering to it.
+na.approx(), which interpolates NA values in a set of ordered values.
+
+```{r}
+z = zoo(sorted_data[,2],sorted_data[,1])
+z_complete <- na.approx(z)
+
+#now let's plt:
+```
+
+
+
+```{r}
+
+#Q5
+
+cols.num <- c("days_num","flight_time_hour","best_price","distance_km")
+price_day[cols.num] <- sapply(price_day[cols.num],as.numeric)
+
+#I use price_day data frame.
+
+#First, we need to the define response variable
+
+price_day$destination <- as.factor(price_day$destination)
+price_day
+
+y <- price_day$best_price
+# and also define a matrix of predictor variables
+x <- data.matrix(price_day[, c('days_num','flight_time_hour')])
+
+# Find best lambda
+cv_model <- cv.glmnet(x, y, alpha = 1)
+
+best_lambda <- cv_model$lambda.min
+best_lambda
+```
+
+```{r}
+summary(price_day[, c('distance_km', 'flight_time_hour','days_num')])
+
+# standardize the predictors
+x <- as.matrix(scale(price_day[, c('distance_km', 'flight_time_hour','days_num')]))
+y <- price_day$best_price
+
+# fit the LASSO model
+lasso_model <- cv.glmnet(x, y, alpha = 1)
+best_lambda <- lasso_model$lambda.min
+best_lambda
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda)
+coef(best_model)
+```
