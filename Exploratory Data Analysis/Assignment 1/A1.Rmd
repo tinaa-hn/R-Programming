@@ -1,0 +1,507 @@
+---
+title: "Assignment Analysis 1"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+  html_document: default
+  
+date: "2023-02-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Required Packages
+```{r}
+library(stringr)
+library(skimr)
+library(tidyverse)
+
+```
+
+### Question 1
+
+```{r cars}
+
+chess = readLines("chess_classic_games.txt")    #Read raw data
+#His <- read.csv("Full_Data_Classic_Q1.csv") #Used this to check my solution
+                                             #with the correct one
+chess_2 = str_split_fixed(chess, " ", 2)     
+
+is_metadata = str_detect(chess, "^\\[.*\\]$") # Separating meta data from moves line
+
+pgn_meta = chess
+
+pgn_meta[!is_metadata] = ""           #Replacing moves line with an empty line
+
+pgn_meta2 = str_split_fixed(pgn_meta, " ", 2)
+pgn_meta3= pgn_meta2[!apply(pgn_meta2 == "", 1, all),]  #Removing empty rows
+
+vars = str_replace(pgn_meta3[,1], "\\[", "")   #Erasing [ from metadata
+varnames = unique(vars)                        #Finding unique variable names
+varnames = varnames[!varnames == '']           #Removing empty variable names
+values = pgn_meta3[,2]
+
+values = str_replace_all(values, "\"", "")      #Erasing [ from metadata values
+
+values = str_replace(values, "\\]$", "")        #Erasing ] from metadata values
+
+New_event = str_detect(pgn_meta3[,1], "Event")  #Number of line where there's a
+                                                #new Event in cleaned data
+New_event_index = which (New_event)
+New_event_index = c(New_event_index,nrow(pgn_meta3)) #including last row index
+N_games = length(New_event_index)-1    #Number of games played. -1 because of
+                                       #the previous code line
+
+MyData <- vector( "character" , 19 )  #Initializing a vector to keep generated rows
+
+
+for (i in 1:N_games){
+  
+  if (i==N_games){ #This if condition is because we have to extract last line data differently
+    a=New_event_index[i]
+    b=New_event_index[i+1]
+    
+  } else {
+    
+    a=New_event_index[i]
+    b=New_event_index[i+1]-1
+    
+  }
+  
+  
+  vars2 <- vars[a:b]  #Slicing variable names for the particular row [i]
+  reorder_index <- match(varnames,vars2) #matching variable names[i] with unique varnames
+  vars2_reordered <-vars2[reorder_index] #Ordering variable names like varnames
+  values_reordered <-values[a:b][reorder_index] #ordering values to correspond to varnames
+  
+  
+  values_reordered <- na.omit(values_reordered)  #omitting NA's so they don't mess ordered values
+  ind <- varnames %in% vars2_reordered   #Used to know where each value should go
+                                       #if values are not ordered as others in metadata
+  
+  New_data <- vector( "character" , 19 ) #initializing data row
+  
+  New_data[ind] <- values_reordered 
+  MyData <- rbind (MyData, New_data) #Adding new data below the other data
+  
+}
+
+MyData2= MyData[!apply(MyData == "", 1, all),]   #Erasing the first row because it was blank
+
+My_Df <- data.frame(MyData2)                    #Changing vector to data frame
+
+colnames(My_Df)<-varnames    #Column names should be varnames(unique variable names)
+rownames(My_Df)<-c()        
+
+
+
+cols.num <- c("WhiteElo","BlackElo","WhiteRatingDiff","BlackRatingDiff")
+My_Df[cols.num] <- sapply(My_Df[cols.num],as.numeric)
+
+
+
+
+
+print(My_Df[6:10,])
+ 
+skim(My_Df)
+```
+\newpage
+
+### Question 2
+
+```{r}
+NEvent = str_detect(chess_2[,1], "Event")     #Number of line where there's a new Event
+tag_line = which (NEvent)                     # Finding the index of 
+
+empty_lines <- grep("^$", chess)              # Finding the index of empty lines in raw data
+differences <- diff(empty_lines)              
+moves_line_ind <- which(differences == 2)#If distance is two, means we have a moves line between them
+moves_line2 <- empty_lines[moves_line_ind]+1 # Moves line is one line after the first empty line
+
+#Nmoves = str_detect(chess_2[,1], "1.") 
+moves_line = c(moves_line2,nrow(chess_2))     #Adding the last row index for last event's moves line
+
+df2 <- data.frame(moves_line = moves_line,tag_line = tag_line) #Adding columns to the data frame
+My_Df2 <- cbind(My_Df,df2)
+
+cols.num <- c("moves_line","tag_line")
+My_Df2[cols.num] <- sapply(My_Df2[cols.num],as.numeric)       #Making them numeric values
+
+print(My_Df2[6:10,])
+
+
+skim(My_Df2)
+
+```
+
+\newpage
+
+### Question 3
+
+
+There are two approaches for this:
+1. Taking the quantiles for Black and White separately: (quantiles_WhiteElo and quantiles_BlackElo)
+2. Taking the quantiles for all the players, even recurring players (everybody_quantile)
+
+
+
+
+```{r}
+quantiles_WhiteElo <- quantile(My_Df2$WhiteElo,probs=c(0.01,0.05,0.25,0.5,0.75,0.90,0.99,0.999,1))
+quantiles_BlackElo <- quantile(My_Df2$BlackElo,probs=c(0.01,0.05,0.25,0.5,0.75,0.90,0.99,0.999,1))
+mixed_players <- cbind(My_Df2$BlackElo,My_Df2$WhiteElo)
+#The above line has every player's Elo in front of it
+everybody_quantile <- quantile(mixed_players, probs=c(0.01,0.05,0.25,0.5,0.75,0.90,0.99,0.999,1))
+
+print(quantiles_BlackElo)
+print(quantiles_WhiteElo)
+print(everybody_quantile)
+```
+
+\newpage
+
+
+### Question 4
+
+```{r}
+#Extracting white player score
+
+Score <- sub("1/2","0.5",sub("\\-.*","",My_Df2$Result) ) #Replacing 1/2 with 0.5
+
+White_Score <- as.numeric(Score) 
+Diff_Elos <- My_Df2$WhiteElo - My_Df2$BlackElo #Difference of White and Black Elos
+
+#linear model
+White_Score_Df_Elo<-as.data.frame(cbind(White_Score,Diff_Elos))
+Model_1 <- lm( White_Score~Diff_Elos , data = White_Score_Df_Elo)
+
+# How many points worse should the first player own to win exactly half of the time?
+#First we find the average white score : (1+0)/2 = 0.5 then see what Diff_Elos this correspond to.
+Diff_To_win_half <- ((0.5 - Model_1$coefficients[1])/Model_1$coefficients[2])
+
+print(Diff_To_win_half)
+
+summary(Model_1)
+```
+
+According to the value "Diff_To_win_half", White should have about 19 less Elos to win exactly half of the time. This proves the slight advantage of playing first (playing with white pieces).
+
+\newpage
+
+### Question 5
+
+```{r}
+#Filtering for players with 2000 Elos abd above:
+Filtered_Df2 <- filter(My_Df2,WhiteElo >= 2000 & BlackElo >=2000) 
+
+#...And doing the same as the previous question:
+Score2 <- sub("1/2","0.5",sub("\\-.*","",Filtered_Df2$Result) )
+
+White_Score2 <- as.numeric(Score2)
+Diff_Elos2 <- Filtered_Df2$WhiteElo - Filtered_Df2$BlackElo
+
+
+White_Score_Df_Elo2<-as.data.frame(cbind(White_Score2,Diff_Elos2))
+Model_2 <- lm( White_Score2~Diff_Elos2 , data = White_Score_Df_Elo2)
+
+Diff_To_win_half2 <- ((0.5 - Model_2$coefficients[1])/Model_2$coefficients[2])
+
+print(Diff_To_win_half2)
+
+summary(Model_2)
+
+```
+
+As we can see there's not a significant change in the answer. It is known that professional players playing with black pieces can reduce the advantage of white players with certain moves and strategies. However, the answer "-18.47" is not so different than -19.144.
+
+\newpage
+
+### Question 6
+
+```{r}
+first_move_col <- data.frame(c("")) #Intializing column for first move
+first_move_ind <- data.frame(c("")) #Intializing column for first move indicator
+N <- nrow(My_Df2) #This is number of games
+
+for (j in 1:N){
+  clean <- sub(" \\{.*","",chess[My_Df2$moves_line][j]) #using raw data and
+  clean <- sub("(.*? .*?) .*", "\\1",clean)
+             # moves line indicator to clean first move from the moves line
+  
+  cleaned = str_split_fixed(clean, " ", 2) #isolating moves line from move number
+                                           #(e.g.: 1. from d4)
+  moves_df <- data.frame(cleaned)
+  if (moves_df$X2 == "e4"){
+    
+    first_move_ind[j,] = 1  #If first move is e4, indicator shows 1 else, 0.
+  } else {
+    first_move_ind[j,] = 0
+  }
+    
+  first_move_col[j,] <- moves_df$X2
+}
+
+#Adding new column to the data set
+df3 <- data.frame(first_move = first_move_col,first_move_ind = first_move_ind)
+My_Df3_Q6 <- cbind(My_Df2,df3)
+
+colnames(My_Df3_Q6)[22] <- "first move"
+colnames(My_Df3_Q6)[23] <- "first move indicator"
+
+table(My_Df3_Q6$`first move`)
+table(My_Df3_Q6$`first move indicator`)
+```
+
+
+\newpage
+
+
+### Question 7
+
+```{r}
+
+My_Df3_Q7 <- filter(My_Df3_Q6, first_move_ind==1)
+freq <- table (findInterval(My_Df3_Q7$WhiteElo,c(-1000000,seq(850,2550,50))))
+
+freq_df <- as.data.frame(freq)
+freq_df[,2]
+freq_df[,1] <-as.numeric(freq_df[,1])
+
+bin = c("<850","850-900","900-950","950-1000","1000-1050","1050-1100"
+        ,"1100-1150","1150-1200", "1200-1250",
+        "1250-1300","1300-1350","1350-1400","1400-1450",
+        "1450-1500","1500-1550","1550-1600","1600-1650","1650-1700",
+        "1700-1750", "1750-1800","1800-1850","1850-1900","1900-1950",
+        "1950-2000","2000-2050","2050-2100","2100-2150","2150-2200", "2200-2250",
+        "2250-2300","2300-2350","2350-2400","2400-2450","2450-2500","2500-2550")
+#freq_df[,1]= bin
+
+plot(freq_df[,1],freq_df[,2],type='b',xlab = "bins",ylab = "Frequencies")
+```
+ 
+ Looks like people with an average degree of skill use e4 as their first move more frequently. More professional players might use different strategies and hence might not use e4 as their first move.
+On the other hand less skilled players use a variety of moves other than e4 as their first move.
+\newpage
+
+### Question 8
+
+
+```{r}
+
+avgElo <- as.numeric((My_Df2$WhiteElo + My_Df2$BlackElo)/2) #Taking the average
+dex = My_Df3_Q6$moves_line  #finding indexes for moves line
+count_blunder <- data.frame(c("")) #Initializing column for blunder moves count
+
+for (m in 1:N){
+  count_blunder[m,] <- str_count(chess[dex[m]],"\\?") #looking for "?/??/?!/.."
+}
+
+Elo_Blunder_count<-as.data.frame(cbind(count_blunder,avgElo))
+colnames(Elo_Blunder_count)[1] <- "count_blunder"
+Model_3 <- lm(Elo_Blunder_count$count_blunder~avgElo , data = Elo_Blunder_count)
+
+summary(Model_3)
+
+```
+
+\newpage
+
+### Question 9
+
+```{r}
+#Extracting time control without the + sign, an adding 1 to avoid ln(0)
+T_ctrl <- as.numeric(sub("\\+.*","",My_Df2$TimeControl))+1. 
+Model_4 <- lm(Elo_Blunder_count$count_blunder~avgElo+ I(log(T_ctrl)) , data = Elo_Blunder_count)
+summary(Model_4)
+```
+
+\newpage
+
+### Question 10
+```{r}
+#Step 1
+chess = readLines("chess_960_games.txt")    #Read raw data
+
+chess_2 = str_split_fixed(chess, " ", 2)     
+
+is_metadata = str_detect(chess, "^\\[.*\\]$") # Separating meta data from moves line
+
+pgn_meta = chess
+
+pgn_meta[!is_metadata] = ""           #Replacing moves line with an empty line
+
+pgn_meta2 = str_split_fixed(pgn_meta, " ", 2)
+pgn_meta3= pgn_meta2[!apply(pgn_meta2 == "", 1, all),]  #Removing empty rows
+
+vars = str_replace(pgn_meta3[,1], "\\[", "")   #Erasing [ from metadata
+varnames = unique(vars)                        #Finding unique variable names
+varnames = varnames[!varnames == '']           #Removing empty variable names
+values = pgn_meta3[,2]
+
+values = str_replace_all(values, "\"", "")      #Erasing [ from metadata values
+
+values = str_replace(values, "\\]$", "")        #Erasing ] from metadata values
+
+New_event = str_detect(pgn_meta3[,1], "Event")  #Number of line where there's a
+                                                #new Event in cleaned data
+New_event_index = which (New_event)
+New_event_index = c(New_event_index,nrow(pgn_meta3)) #including last row index
+N_games = length(New_event_index)-1    #Number of games played. -1 because of
+                                       #the previous code line
+#Initializing a vector to keep generated rows
+MyData <- vector( "character" , length(varnames) )  
+
+
+for (i in 1:N_games){
+  
+  if (i==N_games){ #This if condition is because we have to extract last line data differently
+    a=New_event_index[i]
+    b=New_event_index[i+1]
+    
+  } else {
+    
+    a=New_event_index[i]
+    b=New_event_index[i+1]-1
+    
+  }
+  
+  
+  vars2 <- vars[a:b]  #Slicing variable names for the particular row [i]
+  reorder_index <- match(varnames,vars2) #matching variable names[i] with unique varnames
+  vars2_reordered <-vars2[reorder_index] #Ordering variable names like varnames
+  values_reordered <-values[a:b][reorder_index] #ordering values to correspond to varnames
+  
+  
+  values_reordered <- na.omit(values_reordered)  #omitting NA's so they don't mess ordered values
+  ind <- varnames %in% vars2_reordered   #Used to know where each value should go
+                                       #if values are not ordered as others in metadata
+  
+  New_data <- vector( "character" , length(varnames) ) #initializing data row
+  
+  New_data[ind] <- values_reordered 
+  MyData <- rbind (MyData, New_data) #Adding new data below the other data
+  
+}
+
+MyData2= MyData[!apply(MyData == "", 1, all),]   #Erasing the first row because it was blank
+
+My_Df <- data.frame(MyData2)                    #Changing vector to data frame
+
+colnames(My_Df)<-varnames    #Column names should be varnames(unique variable names)
+rownames(My_Df)<-c()        
+
+
+
+cols.num <- c("WhiteElo","BlackElo","WhiteRatingDiff","BlackRatingDiff","SetUp")
+My_Df[cols.num] <- sapply(My_Df[cols.num],as.numeric)
+
+print(My_Df[6:10,])
+ 
+
+skim(My_Df)
+
+```
+
+\newpage
+
+```{r}
+
+#Step 2
+NEvent = str_detect(chess_2[,1], "Event")     #Number of line where there's a new Event
+tag_line = which (NEvent)                     # Finding the index of 
+
+empty_lines <- grep("^$", chess)              # Finding the index of empty lines in raw data
+differences <- diff(empty_lines)              
+moves_line_ind <- which(differences == 2)#If distance is two, means we have a moves line between them
+moves_line2 <- empty_lines[moves_line_ind]+1 # Moves line is one line after the first empty line
+
+#Nmoves = str_detect(chess_2[,1], "1.") 
+moves_line = c(moves_line2,nrow(chess_2))     #Adding the last row index for last event's moves line
+
+df2 <- data.frame(moves_line = moves_line,tag_line = tag_line) #Adding columns to the data frame
+My_Df2 <- cbind(My_Df,df2)
+
+cols.num <- c("moves_line","tag_line")
+My_Df2[cols.num] <- sapply(My_Df2[cols.num],as.numeric)       #Making them numeric values
+
+print(My_Df2[6:10,])
+
+
+
+skim(My_Df2)
+#write.csv(My_Df2, "~/Desktop/UW 2/Data Analysis - Stat 874/A2/Q10.csv", row.names=FALSE)
+```
+
+\newpage
+
+
+### Question 11
+
+
+Question 6 redone for 960 games:
+
+```{r}
+
+first_move_col <- data.frame(c("")) #Intializing column for first move
+first_move_ind <- data.frame(c("")) #Intializing column for first move indicator
+N <- nrow(My_Df2) #This is number of games
+
+for (j in 1:N){
+  clean <- sub(" \\{.*","",chess[My_Df2$moves_line][j]) #using raw data and
+  clean <- sub("(.*? .*?) .*", "\\1",clean)
+             # moves line indicator to clean first move from the moves line
+  
+  cleaned = str_split_fixed(clean, " ", 2) #isolating moves line from move number
+                                           #(e.g.: 1. from d4)
+  moves_df <- data.frame(cleaned)
+  if (moves_df$X2 == "e4"){
+    
+    first_move_ind[j,] = 1  #If first move is e4, indicator shows 1 else, 0.
+  } else {
+    first_move_ind[j,] = 0
+  }
+    
+  first_move_col[j,] <- moves_df$X2
+}
+
+#Adding new column to the data set
+df3 <- data.frame(first_move = first_move_col,first_move_ind = first_move_ind)
+My_Df3_Q6 <- cbind(My_Df2,df3) #adding two new column
+
+colnames(My_Df3_Q6)[23] <- "first move"
+colnames(My_Df3_Q6)[24] <- "first move indicator" #Renaming columns
+
+table(My_Df3_Q6$`first move`)
+table(My_Df3_Q6$`first move indicator`)
+
+```
+
+\newpage
+
+Question 7 redone for 960 games:
+
+```{r}
+
+My_Df3_Q7 <- filter(My_Df3_Q6, first_move_ind==1)
+freq <- table (findInterval(My_Df3_Q7$WhiteElo,c(-1000000,seq(850,2550,50))))
+
+freq_df <- as.data.frame(freq)
+freq_df[,2]
+freq_df[,1] <-as.numeric(freq_df[,1])
+
+bin = c("<850","850-900","900-950","950-1000","1000-1050","1050-1100"
+        ,"1100-1150","1150-1200", "1200-1250",
+        "1250-1300","1300-1350","1350-1400","1400-1450",
+        "1450-1500","1500-1550","1550-1600","1600-1650","1650-1700",
+        "1700-1750", "1750-1800","1800-1850","1850-1900","1900-1950",
+        "1950-2000","2000-2050","2050-2100","2100-2150","2150-2200", "2200-2250",
+        "2250-2300","2300-2350","2350-2400","2400-2450","2450-2500","2500-2550")
+bin <- factor(bin)
+#freq_df[,1]= bin
+#par(las = 2)
+plot(freq_df[,1],freq_df[,2],type='b',xlab = "bins",ylab = "Frequencies")
+
+```
